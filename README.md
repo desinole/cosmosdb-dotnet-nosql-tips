@@ -580,3 +580,46 @@ ItemResponse<MyItem> response = await container.UpsertItemAsync<MyItem>(item: ne
 - Improved perf: By avoiding the serialization process, the Stream API can improve the performance of read and write operations. This is particularly beneficial for applications that need to handle large volumes of data quickly
 - Middle-tier applications: Applications that act as intermediaries, relaying data between different services or tiers, can benefit from the Stream API. These applications can pass data along without the need to serialize and deserialize it, thus saving time and resources.
 
+### Parallelism
+
+The MaxConcurrency property specifies the maximum number of concurrent operations that can be run client-side during parallel query execution. Setting this property helps control the degree of parallelism.
+
+```csharp
+FeedIterator<MyItem> query = container.GetItemQueryIterator<MyItem>(queryDefinition);
+FeedResponse<MyItem> response = await query.ReadNextAsync(maxConcurrency: 10);
+```
+
+The MaxBufferedItemCount property specifies the maximum number of items that can be buffered client-side during parallel query execution. This helps control the amount of prefetched data.
+
+```csharp
+FeedIterator<MyItem> query = container.GetItemQueryIterator<MyItem>(queryDefinition);
+FeedResponse<MyItem> response = await query.ReadNextAsync(maxBufferedItemCount: 100);
+```
+
+- Start with High Values: Begin with high values for MaxConcurrency (e.g., int.MaxValue) to achieve the best latency and then adjust based on resource constraints.
+- Monitor and Adjust: Use Azure Monitor and Application Insights to monitor CPU usage and query performance. Adjust MaxConcurrency and MaxBufferedItemCount based on observed performance and resource usage.
+- Balance Parallelism and Resource Usage: Find a balance between parallelism and resource usage to avoid high CPU and memory consumption while maintaining good performance.
+
+## 10. Logging and diagnostics
+
+### Diagnostics Logs on portal
+
+Enable diagnostics settings on your azure account
+
+This query is intentionally incorrect, we should get as a result a BadRequest error with 400 code. 
+
+<img src="./assets/diagnostics1.png" alt="Incorrect CosmosDB query">
+
+Go back to Logs from the Azure Cosmos DB menu and execute this diagnostic query. And you will find the 400 error in the logs.
+
+<img src="./assets/diagnostics2.png" alt="Kusto query shows the 400 error">
+
+### Tracers
+
+Some environments have the .NET DefaultTraceListener enabled. The DefaultTraceListener poses performance issues on production environments causing high CPU and I/O bottlenecks. Check and make sure that the DefaultTraceListener is disabled for your application by removing it from the TraceListeners on production environments.
+ 
+Latest SDK versions (greater than 3.23.0) automatically remove it when they detect it, with older versions, you can remove it by:
+
+```csharp
+DefaultTrace.TraceSource.Switch.Level = SourceLevels.Off;
+```
