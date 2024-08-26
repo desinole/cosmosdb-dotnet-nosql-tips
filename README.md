@@ -298,6 +298,8 @@ Add the CosmosDB SDK to your dotnet project:
 dotnet add package Microsoft.Azure.Cosmos
 ```
 
+### Cosmos Client and Singleton
+
 Instantiate the CosmosClient using the connection string:
 
 ```csharp
@@ -328,6 +330,15 @@ services.AddSingleton<CosmosClient>(sp =>
 });
 ```
 
+### What happens when you don't use Singleton
+
+- Increased Latency: Each new instance of CosmosClient requires initialization, which includes reading account information, container information, and partition layout.
+- Resource Exhaustion: Creating multiple instances of CosmosClient can lead to ephemeral port exhaustion, as each instance opens new connections.
+- Thread Pool Starvation: If multiple CosmosClient instances are used synchronously, it can lead to thread pool starvation. This happens because synchronous operations block threads, reducing the availability of threads for other tasks.
+- Inconsistent Configuration: Multiple instances of CosmosClient can lead to inconsistent configuration settings, such as connection policies, retry options, and consistency levels.
+
+### Create a Database and a Container (check for pre-existing)
+
 Use this CosmosClient instance to create a Database and a Container:
 
 ```csharp
@@ -340,6 +351,232 @@ Use this CosmosClient instance to create a Database and a Container:
     }
 ```
 
-### Create a Database and a Container
+- Check if a database exists, and if it doesn't, create it. 
+- Defensive programming
+- Expensive because it performs a pre-check
+- Database pIf you use create only, you would have to perform error catch to ensure no duplicates
+- Properties such as throughput are not validated and can be different then the passed properties.
 
 ```csharp
+DatabaseResponse database = await client.CreateDatabaseIfNotExistsAsync("MyDatabase");
+ContainerResponse container = await database.Database.CreateContainerIfNotExistsAsync("MyContainer", "/partitionKey");
+```
+
+Or you can create a Database and a Container using create only, and perform try catch to ensure no duplicates
+
+```csharp
+try
+{
+    DatabaseResponse database = await client.CreateDatabaseAsync("MyDatabase");
+    ContainerResponse container = await database.Database.CreateContainerAsync("MyContainer", "/partitionKey");
+}
+catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
+{
+    // Database or Container already exists
+}
+```
+
+### Create versus Upsert
+
+- CreateItemAsync is best for scenarios where you need to ensure that no duplicate items are inserted and are prepared to handle conflicts if the item already exists.
+- Ensures uniqueness but could throw error if item with same id exists
+
+```csharp
+ItemResponse<MyItem> response = await container.CreateItemAsync<MyItem>(id: new MyItem { Id = "1", Name = "John Doe" }, partitionKey: new PartitionKey("partitionKey"));
+```
+
+- UpsertItemAsync is ideal for scenarios where you want to simplify the logic by combining insert and update operations, ensuring the item is present without worrying about duplicates.
+- Upserts are idempotent: safe to call mutiple times without creating duplicates and handles both insert and updates.
+- Expensive due to check
+
+```csharp
+ItemResponse<MyItem> response = await container.UpsertItemAsync<MyItem>(item:new MyItem { Id = "1", Name = "John Doe" }, partitionKey: new PartitionKey("partitionKey"));
+```
+
+### Point Reads versus Queries
+
+use point reads when you need to retrieve a single item by its ID and partition key for maximum efficiency.
+
+```chsarp
+ItemResponse<MyItem> response = await container.ReadItemAsync<MyItem>(id: "1", partitionKey: new PartitionKey("partitionKey"));
+```
+
+Use queries when you need more flexibility to filter and retrieve multiple items.
+
+```csharp
+QueryDefinition queryDefinition = new QueryDefinition("SELECT * FROM c WHERE c.lastname = @lastname AND c.partitionKey = @partitionKey")
+    .WithParameter("@lastname", "Doe");
+    .WithParameter("@partitionKey", "1");
+```
+
+## 7. Considerations for global distribution
+
+### Consistency
+
+<img src="./assets/consistency.png" alt="Consitency Models">
+
+**Strong Consistency**
+
+Reads always return the most recent committed write. This level provides the highest consistency but at the cost of higher latency and reduced availability during failures.
+Use Case: Financial transactions where it is crucial to always have the most up-to-date information, such as banking applications.
+
+**Bounded Staleness**
+
+Guarantees that reads are not too out-of-date. You can configure the staleness window in terms of time or number of versions.
+Use Case: Social media feeds where it is acceptable for the data to be slightly out-of-date but still relatively fresh.
+
+**Session Consistency**
+
+Guarantees consistency within a single session. User or application needs to see their own writes immediately.
+Use Case: Shopping cart applications where a user needs to see their own updates immediately but can tolerate some delay in seeing updates from others.
+
+**Consistent Prefix** 
+
+Guarantees that reads never see out-of-order writes. This level ensures that if a sequence of writes is performed in a specific order, reads will see the writes in the same order.
+Use Case: Event logging systems where the order of events is crucial, such as in monitoring and alerting systems.
+
+**Eventual Consistency**
+
+Guarantees that, eventually, all replicas will converge. This level offers the highest availability and lowest latency but does not guarantee immediate consistency.
+Use Case: Product catalog applications where it is acceptable for the data to be eventually consistent, such as in e-commerce websites
+
+### Single-region versus multi-region writes
+
+<img src="./assets/writeregions.png" alt="Single-region versus multi-region writes">
+
+**Single-Write Region**
+
+In a single-write region configuration, one region is designated as the primary write region, and all other regions are read-only replicas. Writes are directed to the primary region and then replicated to the read regions. This setup is simpler but can lead to higher latency for write operations if the primary region is far from the user.
+
+Example: A company with a primary user base in North America might choose a single-write region in the US, with read replicas in Europe and Asia to serve global read requests.
+
+**Multi-Write Regions**
+
+In a multi-write region configuration, multiple regions can accept write operations. This setup provides several benefits:
+
+- Low Latency Writes: Users can write to the nearest region, reducing latency.
+- High Availability: If one region goes down, other regions can continue to accept writes, ensuring near-zero downtime.
+- Conflict Resolution: Writes in different regions may lead to conflicts. Cosmos DB uses a conflict resolution policy to handle these conflicts, ensuring data consistency across regions.
+
+Example: An IoT application with devices distributed globally can benefit from multi-write regions
+
+### Configuring app and code for multi-region
+
+- Co-locate app with write region(s)
+- Set Application Region: Use ApplicationRegion property in CosmosClientOptions to specify region where application is deployed. This ensures that the SDK directs write operations to the nearest region.
+- ApplicationPreferredRegions: This property allows you to specify a list of preferred regions in order of priority. This is useful when you want more granular control over which regions to use for read and write operations. The SDK will attempt to use the regions in the order specified.
+
+```csharp
+CosmosClientOptions options = new CosmosClientOptions()
+{
+    ApplicationRegion = Regions.EastUS,
+    ApplicationPreferredRegions = new List<string> { "East US", "West US" }
+};
+```
+
+## 8. How do I measure performance / throughput?
+
+### Request Units (RUs)
+
+- Currency: Request Units (RUs) are the currency for throughput in Azure Cosmos DB. 
+- CPU + IOPS + Mem: They abstract the system resources (CPU, IOPS, and memory) required to perform database operations. 
+- Ops consume RUs based on complexity: Each operation, whether it’s a read, write, or query, consumes a certain number of RUs based on its complexity
+- Examples (for 1KB doc):
+  - Point-read: 1 RU
+  - Write: 5 RU
+  - Query: it depends
+
+### How to estimate RUs
+
+- Run operations on representative data
+- Capture RUs for each operation
+- For each operation, multiply RU * number of operations
+
+Query 1: 
+select * from c where c.name == 'ABC'
+RU for 1 run = 26.18 RUs
+Estimated 100 queries per second
+Total for query 1 = 26.18 * 100 = 2618 RUs
+Repeat for other operations and total
+
+### Obtain RUs in .NET code
+
+To get the RU charge for an operation in the .NET SDK v3, you can access the RequestCharge property from the response object.
+
+```csharp
+ItemResponse<MyItem> response = await container.ReadItemAsync<MyItem>(id: "1", partitionKey: new PartitionKey("partitionKey"));
+double requestCharge = response.RequestCharge;
+```
+
+You should be running this constantly at least in dev and have the ability to record in prod on demand
+
+You can also set the RU charge manually for each operation using RequestOptions:
+
+```csharp
+ItemResponse<MyItem> response = await container.ReadItemAsync<MyItem>(id: "1", partitionKey: new PartitionKey("partitionKey"), requestOptions: new ItemRequestOptions { OfferThroughput = 400 });
+```
+
+### What happens when you run out of RUs?
+
+This is what a throttling error looks like:
+
+```json
+{
+    "code": "429",
+    "message": "Request rate is large",
+    "retryAfterMs": 1000
+}
+```
+
+- Throttling: If you exceed the provisioned RUs, Cosmos DB will throttle your requests. This can lead to increased latency and timeouts.
+- For workloads that aren't sensitive to latency, you can provision less throughput and let the application handle rate-limiting when the actual throughput exceeds the provisioned throughput. 
+- The server will preemptively end the request with RequestRateTooLarge (HTTP status code 429) and return the x-ms-retry-after-ms header indicating the amount of time, in milliseconds, that the user must wait before retrying the request.
+
+### Backoffs and retries
+
+.NET SDK will implicitly catch this response, respect the server-specified retry-after header, and retry the request.Unless your account is accessed concurrently by multiple clients, the next retry will succeed.
+
+If you have more than one client cumulatively operating consistently above the request rate, the default retry count, which is currently set to 9, may not be sufficient.
+
+In such cases, the client throws a RequestRateTooLargeException with status code 429 to the application. 
+
+The default retry count can be changed by setting the RetryOptions on the ConnectionPolicy instance. 
+
+By default, the RequestRateTooLargeException with status code 429 is returned after a cumulative wait time of 30 seconds if the request continues to operate above the request rate. This occurs even when the current retry count is less than the max retry count, be it the default of 9 or a user-defined value.
+
+
+You can use the ConnectionPolicy to configure retries and backoff policies:
+
+```csharp
+ConnectionPolicy connectionPolicy = new ConnectionPolicy
+{
+    RetryOptions = new RetryOptions
+    {
+        MaxRetryAttemptsOnThrottledRequests = 9,
+        MaxRetryWaitTimeInSeconds = 30
+    }
+};
+```
+
+MaxRetryAttemptsOnThrottledRequests is set to 3, so in this case, if a request operation is rate limited by exceeding the reserved throughput for the container, the request operation retries three times before throwing the exception to the application. MaxRetryWaitTimeInSeconds is set to 60, so in this case if the cumulative retry wait time in seconds since the first request exceeds 60 seconds, the exception is thrown.
+
+## 9. Async, Stream and Parallelism
+
+Asynchronous programming allows your application to perform other tasks while waiting for I/O operations to complete. This is particularly important for database operations, which can be time-consuming.
+
+In this example, the UpsertItemAsync method allows the application to continue executing other code while waiting for the read operation to complete.
+
+```csharp
+ItemResponse<MyItem> response = await container.UpsertItemAsync<MyItem>(item: new MyItem { Id = "1", Name = "John Doe" }, partitionKey: new PartitionKey("partitionKey"));
+```
+
+- Avoid blocking calls: Task.Result, Task.Wait, and Task.GetAwaiter().GetResult(). 
+- The entire call stack is asynchronous in order to benefit from async/await patterns. 
+- Many synchronous blocking calls lead to Thread Pool starvation and degraded response times.
+
+### StreamAPI
+
+- Stream instead of serialize-deserialize: The Stream API enables applications to receive and return data as streams, bypassing the need for serialization and deserialization. This means data is handled in its raw form, which can significantly reduce processing overhead and improve performance.
+- Improved perf: By avoiding the serialization process, the Stream API can improve the performance of read and write operations. This is particularly beneficial for applications that need to handle large volumes of data quickly
+- Middle-tier applications: Applications that act as intermediaries, relaying data between different services or tiers, can benefit from the Stream API. These applications can pass data along without the need to serialize and deserialize it, thus saving time and resources.
+
