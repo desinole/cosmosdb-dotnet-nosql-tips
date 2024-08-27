@@ -12,8 +12,7 @@ if (builder.Environment.IsDevelopment())
         // <create_client>
         // create client with azure credentials (SP)
         CosmosClient client = new(
-            accountEndpoint: builder.Configuration["AZURE_COSMOS_DB_NOSQL_ENDPOINT"]!,
-            tokenCredential: new DefaultAzureCredential()
+            connectionString: builder.Configuration["AZURE_COSMOS_DB_NOSQL_CONNECTION_STRING"]!
         );
         // </create_client>
 

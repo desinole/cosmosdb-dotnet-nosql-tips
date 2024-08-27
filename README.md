@@ -464,7 +464,24 @@ Example: An IoT application with devices distributed globally can benefit from m
 
 - Co-locate app with write region(s)
 - Set Application Region: Use ApplicationRegion property in CosmosClientOptions to specify region where application is deployed. This ensures that the SDK directs write operations to the nearest region.
+
+```csharp
+CosmosClientOptions options = new CosmosClientOptions()
+{
+    ApplicationRegion = Regions.EastUS
+};
+```
+
 - ApplicationPreferredRegions: This property allows you to specify a list of preferred regions in order of priority. This is useful when you want more granular control over which regions to use for read and write operations. The SDK will attempt to use the regions in the order specified.
+
+```csharp
+CosmosClientOptions options = new CosmosClientOptions()
+{
+    ApplicationPreferredRegions = new List<string> { "East US", "West US" }
+};
+```
+
+- You can only pick one of the above options
 
 ```csharp
 CosmosClientOptions options = new CosmosClientOptions()
