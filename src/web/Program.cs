@@ -10,9 +10,10 @@ if (builder.Environment.IsDevelopment())
     builder.Services.AddSingleton<CosmosClient>((_) =>
     {
         // <create_client>
-        // create client with azure credentials (SP)
+        // create client with connection strings
         CosmosClient client = new(
-            connectionString: builder.Configuration["AZURE_COSMOS_DB_NOSQL_CONNECTION_STRING"]!
+            accountEndpoint: builder.Configuration["AZURE_COSMOS_DB_NOSQL_ENDPOINT"]!,
+            authKeyOrResourceToken: builder.Configuration["AZURE_COSMOS_DB_NOSQL_KEY"]
         );
         // </create_client>
 
