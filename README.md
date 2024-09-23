@@ -1,5 +1,11 @@
 # 10 things dotnet developers need to know while using CosmosDB API for NoSQL
 
+## Useful tools & tips
+
+- [Migrate data using the desktop data migration tool - Azure Cosmos DB | Microsoft Learn](https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-migrate-desktop-tool?tabs=azure-cli)
+- [Azure Cosmos DB lifetime free tier | Microsoft Learn](https://learn.microsoft.com/en-us/azure/cosmos-db/free-tier)
+- [Emulator (Docker/local) - Azure Cosmos DB | Microsoft Learn](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator)
+
 ## 1. What is CosmosDB and what is API for NoSQL? 
 
 <img src="./assets/1.png" alt="CosmosDB Ecosystems">
